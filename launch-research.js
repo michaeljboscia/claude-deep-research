@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * launch-research.js — Headless batch launcher for Claude Deep Research
+ * launch-research.js — Batch launcher for Claude Deep Research
  *
- * Reads topics from a text file (one per line), opens each in a new
- * claude.ai conversation with Research mode enabled, and submits.
- * Runs headless so you can batch-launch and walk away.
+ * Reads topics from a text file (one per line), connects to a real
+ * Chrome instance (off-screen), and submits each topic as a Deep
+ * Research conversation on claude.ai.
  *
  * Usage:
  *   node launch-research.js --topics ./topics/my-topics.txt
@@ -28,6 +28,7 @@ function parseArgs() {
     delay: 15,
     dryRun: false,
     startFrom: 1,
+    visible: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -46,6 +47,9 @@ function parseArgs() {
       case '--start-from':
         opts.startFrom = parseInt(args[++i], 10);
         break;
+      case '--visible':
+        opts.visible = true;
+        break;
       case '--help':
       case '-h':
         console.log(`
@@ -59,6 +63,7 @@ Options:
   -d, --delay <seconds>  Delay between topics (default: 15)
   --dry-run              Print topics without launching browser
   --start-from <N>       Start from topic number N (1-indexed)
+  --visible              Show the browser window (default: off-screen)
   -h, --help             Show this help
 `);
         process.exit(0);
@@ -101,44 +106,66 @@ function loadTopics(filePath) {
     .filter(line => line && !line.startsWith('#'));
 }
 
-// ─── Research toggle ─────────────────────────────────────────────
+// ─── Cloudflare handling ─────────────────────────────────────────
 
 /**
- * Enable the Research toggle. This is the trickiest part because
- * the toggle's DOM representation varies and we need to detect
- * whether it's already enabled.
+ * Wait for Cloudflare Turnstile challenge to resolve.
+ * With connectOverCDP (real Chrome), this should auto-clear quickly.
+ */
+async function waitForCloudflare(page, timeout = 30000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    // Check if we've navigated past the challenge (URL changed)
+    const url = page.url();
+    if (url.includes('claude.ai') && !url.includes('challenges')) {
+      // Also verify the challenge text is gone
+      const stillBlocked = await waitForAny(page, SELECTORS.cloudflareChallenge, 2000);
+      if (!stillBlocked) return true;
+    }
+    await page.waitForTimeout(2000);
+  }
+  return false;
+}
+
+// ─── Research activation ─────────────────────────────────────────
+
+/**
+ * Enable Research mode via the + menu.
+ *
+ * Flow: click "+" button → menu opens → click "Research" menu item.
  */
 async function enableResearch(page) {
-  const toggle = await findElement(page, SELECTORS.researchToggle, { timeout: 5000 });
-
-  if (!toggle) {
-    logger.warn('Research toggle not found — may not be available on this account.');
+  // Step 1: Click the + button to open the tools menu
+  const plusBtn = await findElement(page, SELECTORS.plusMenu, { timeout: 5000 });
+  if (!plusBtn) {
+    logger.warn('Plus menu button not found.');
     return false;
   }
 
-  // Check if already enabled via common patterns
-  const isPressed = await toggle.getAttribute('aria-pressed').catch(() => null);
-  const dataState = await toggle.getAttribute('data-state').catch(() => null);
-  const classes = await toggle.getAttribute('class').catch(() => '');
+  await plusBtn.click();
+  await page.waitForTimeout(1000);
 
-  const alreadyEnabled =
-    isPressed === 'true' ||
-    dataState === 'active' ||
-    dataState === 'on' ||
-    classes.includes('active') ||
-    classes.includes('selected') ||
-    classes.includes('bg-accent');
-
-  if (alreadyEnabled) {
-    logger.info('Research toggle already enabled.');
-    return true;
+  // Step 2: Wait for the menu to appear
+  const menu = await findElement(page, SELECTORS.toolsMenu, { timeout: 3000 });
+  if (!menu) {
+    logger.warn('Tools menu did not open.');
+    return false;
   }
 
-  await toggle.click();
-  logger.info('Research toggle clicked.');
+  // Step 3: Click "Research" in the menu
+  const researchItem = await findElement(page, SELECTORS.researchMenuItem, { timeout: 3000 });
+  if (!researchItem) {
+    logger.warn('Research menu item not found — may not be available on this account.');
+    // Close the menu by pressing Escape
+    await page.keyboard.press('Escape');
+    return false;
+  }
 
-  // Brief wait for UI state to settle
-  await page.waitForTimeout(1000);
+  await researchItem.click();
+  logger.info('Research mode activated.');
+
+  // Wait for menu to close and UI to settle
+  await page.waitForTimeout(1500);
   return true;
 }
 
@@ -220,19 +247,36 @@ async function main() {
     return;
   }
 
-  // Launch headless browser with saved session
-  logger.info('Launching headless browser...');
-  const { context, page } = await launchBrowser({ headless: true });
+  // Launch real Chrome (off-screen) and connect via CDP
+  logger.info(`Launching Chrome (${opts.visible ? 'visible' : 'off-screen'})...`);
+  const { browser, context, page } = await launchBrowser({ visible: opts.visible });
+
+  // Navigate and handle Cloudflare challenge if it appears
+  logger.info('Navigating to claude.ai...');
+  await page.goto('https://claude.ai/new', { waitUntil: 'domcontentloaded' });
+
+  // Check for Cloudflare challenge
+  const hitCloudflare = await waitForAny(page, SELECTORS.cloudflareChallenge, 5000);
+  if (hitCloudflare) {
+    logger.warn('Cloudflare challenge detected — waiting for auto-resolve (up to 30s)...');
+    const cleared = await waitForCloudflare(page, 30000);
+    if (!cleared) {
+      logger.error('Cloudflare challenge did not resolve. Try running: npm run login');
+      await saveScreenshot(page, 'cloudflare_blocked');
+      await browser.close();
+      process.exit(1);
+    }
+    logger.ok('Cloudflare challenge cleared.');
+  }
 
   // Verify login is still valid
   logger.info('Verifying login session...');
-  await page.goto('https://claude.ai/new', { waitUntil: 'domcontentloaded' });
-
   const loggedIn = await waitForAny(page, SELECTORS.loggedIn, 15000);
   if (!loggedIn) {
     logger.error('Not logged in. Run "npm run login" first to authenticate.');
     await saveScreenshot(page, 'not_logged_in');
-    await context.close();
+    await browser.close();
+    await killChrome();
     process.exit(1);
   }
   logger.ok('Session is valid.');
@@ -274,10 +318,14 @@ async function main() {
   logger.info('Check claude.ai in your browser to monitor research progress.');
   logger.info('═══════════════════════════════════════');
 
-  await context.close();
+  // Disconnect Playwright but leave Chrome running — Deep Research
+  // needs the browser alive to process in the background.
+  await browser.close();
+  logger.info('Playwright disconnected. Chrome stays running in the background.');
+  logger.info('To kill it later: lsof -ti:9222 | xargs kill');
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   logger.error('Fatal error:', err.message);
   process.exit(1);
 });

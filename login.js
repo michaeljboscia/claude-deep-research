@@ -2,13 +2,12 @@
 /**
  * login.js — One-time auth setup for claude.ai
  *
- * Opens a visible Chrome window to claude.ai. You log in manually
- * (email, SSO, whatever). Once the chat input appears, the session
- * is confirmed. Close the browser (Ctrl+C) and the session persists
- * in ./browser-profile/ for headless reuse by launch-research.js.
+ * Spawns a real Chrome window (not Playwright-launched) with remote
+ * debugging enabled, navigates to claude.ai, and waits for you to
+ * log in. Session persists in ./browser-profile/ for reuse.
  */
 
-const { launchBrowser } = require('./lib/browser');
+const { launchBrowser, killChrome } = require('./lib/browser');
 const { SELECTORS, waitForAny } = require('./lib/selectors');
 const { logger } = require('./lib/logger');
 
@@ -16,10 +15,14 @@ const LOGIN_URL = 'https://claude.ai';
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes to complete login
 
 async function main() {
+  // Kill any stale debug Chrome from a previous run
+  await killChrome();
+  await new Promise(r => setTimeout(r, 1000));
+
   logger.info('Opening Chrome for claude.ai login...');
   logger.info('Log in manually. This window will detect when you\'re authenticated.');
 
-  const { context, page } = await launchBrowser({ headless: false });
+  const { browser, context, page } = await launchBrowser({ visible: true });
 
   await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded' });
   logger.info(`Navigated to ${LOGIN_URL}`);
@@ -36,15 +39,11 @@ async function main() {
     logger.warn('Try again with: npm run login');
   }
 
-  // Keep the browser open so the user can verify / interact
-  // Session data is auto-persisted by the persistent context.
-  // The process stays alive until Ctrl+C.
   logger.info('Browser staying open. Press Ctrl+C to exit.');
 
-  // Handle graceful shutdown
   process.on('SIGINT', async () => {
-    logger.info('Closing browser and saving session...');
-    await context.close();
+    logger.info('Shutting down Chrome...');
+    await killChrome();
     process.exit(0);
   });
 
@@ -52,7 +51,8 @@ async function main() {
   await new Promise(() => {});
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   logger.error('Login failed:', err.message);
+  await killChrome();
   process.exit(1);
 });
