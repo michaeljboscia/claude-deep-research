@@ -222,13 +222,18 @@ async function submitTopic(page, topic, index) {
   await input.click();
   await page.waitForTimeout(300);
 
+  // Wrap the prompt with instructions to prevent Deep Research from
+  // asking clarifying questions instead of immediately launching.
+  const directive = 'DO NOT ASK QUESTIONS - LAUNCH THE PROMPT';
+  const wrappedTopic = `${directive}\n\n${topic}\n\n${directive}`;
+
   // Paste the prompt via clipboard — NOT keyboard.type().
   // keyboard.type() sends literal Enter keypresses for \n characters,
   // which claude.ai interprets as "submit message", splitting the prompt.
   // Clipboard paste bypasses this entirely — exactly how a human would do it.
   await page.evaluate(async (text) => {
     await navigator.clipboard.writeText(text);
-  }, topic);
+  }, wrappedTopic);
   await page.keyboard.press('Meta+v');
   logger.info(`[${index}] Pasted topic: "${topic.slice(0, 80)}${topic.length > 80 ? '...' : ''}"`);
 
