@@ -61,6 +61,13 @@ Compare vector database performance: Pinecone vs Weaviate vs Qdrant for producti
 ]
 ```
 
+A ready-to-run example is included — 5 Deep Research prompts about the Teletubbies:
+
+```bash
+# Try it out
+node launch-research.js -t ./topics/example-topics.json --dry-run
+```
+
 ### Step 3: Launch research
 
 ```bash
