@@ -16,6 +16,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 const { launchBrowser, killChrome } = require('./lib/browser');
 const { SELECTORS, findElement, waitForAny } = require('./lib/selectors');
 const { logger, saveScreenshot } = require('./lib/logger');
@@ -266,31 +267,50 @@ async function submitTopic(page, topic, index) {
   const directive = 'DO NOT ASK QUESTIONS - LAUNCH THE PROMPT';
   const wrappedTopic = `${directive}\n\n${topic}\n\n${directive}`;
 
-  // Paste the prompt via clipboard — NOT keyboard.type().
-  // keyboard.type() sends literal Enter keypresses for \n characters,
-  // which claude.ai interprets as "submit message", splitting the prompt.
-  // Clipboard paste bypasses this entirely — exactly how a human would do it.
-  await page.evaluate(async (text) => {
-    await navigator.clipboard.writeText(text);
-  }, wrappedTopic);
+  // Paste via macOS system clipboard (pbcopy) — NOT the browser Clipboard API.
+  // The browser's navigator.clipboard.writeText() loses permission after several
+  // page navigations due to "transient user activation" expiry. pbcopy writes
+  // directly to the OS clipboard, which Meta+V reads without any browser permission.
+  const tmpFile = '/tmp/claude-paste-buffer.txt';
+  fs.writeFileSync(tmpFile, wrappedTopic);
+  execSync(`cat "${tmpFile}" | pbcopy`);
   await page.keyboard.press('Meta+v');
   logger.info(`[${index}] Pasted topic: "${topic.slice(0, 80)}${topic.length > 80 ? '...' : ''}"`);
 
   // Let ProseMirror process the pasted content
   await page.waitForTimeout(1000);
 
-  // Verify the paste actually landed — check the editor has content
-  const editorContent = await page.evaluate(() => {
-    const el = document.querySelector('[data-testid="chat-input"]')
+  // Verify the paste actually landed.
+  // claude.ai has two paste modes: short text goes inline in the editor,
+  // long text becomes a "Pasted content" attachment block. Check for both.
+  const pasteStatus = await page.evaluate(() => {
+    // Check 1: inline text in the editor
+    const editor = document.querySelector('[data-testid="chat-input"]')
       || document.querySelector('div[contenteditable="true"]');
-    return el ? el.textContent.trim().length : 0;
+    const inlineChars = editor ? editor.textContent.trim().length : 0;
+
+    // Check 2: "Pasted content" attachment block (large pastes)
+    const hasPastedAttachment = !!document.querySelector('[class*="pasted"], [data-testid*="pasted"], [aria-label*="Pasted"]')
+      || document.body.innerText.includes('Pasted content');
+
+    // Check 3: send button is enabled (content exists in some form)
+    const sendBtn = document.querySelector('[data-testid="send-button"], button[aria-label="Send Message"], button[aria-label="Send message"]');
+    const sendEnabled = sendBtn && !sendBtn.disabled;
+
+    return { inlineChars, hasPastedAttachment, sendEnabled };
   });
-  if (editorContent === 0) {
-    logger.error(`[${index}] Paste failed — editor is empty after paste.`);
+
+  if (pasteStatus.inlineChars > 0) {
+    logger.info(`[${index}] Paste verified (${pasteStatus.inlineChars} chars inline).`);
+  } else if (pasteStatus.hasPastedAttachment) {
+    logger.info(`[${index}] Paste verified (attached as "Pasted content" block).`);
+  } else if (pasteStatus.sendEnabled) {
+    logger.info(`[${index}] Paste verified (send button enabled).`);
+  } else {
+    logger.error(`[${index}] Paste failed — no content detected in editor.`);
     await saveScreenshot(page, `topic_${index}_paste_failed`);
     return false;
   }
-  logger.info(`[${index}] Paste verified (${editorContent} chars in editor).`);
 
   // Submit: try the send button first, fall back to Enter key
   const sendBtn = await findElement(page, SELECTORS.sendButton, { timeout: 3000 });
