@@ -82,6 +82,20 @@ Options:
     process.exit(1);
   }
 
+  // Validate numeric args
+  if (isNaN(opts.delay) || opts.delay < 0) {
+    logger.error(`Invalid --delay value. Must be a positive number.`);
+    process.exit(1);
+  }
+  if (isNaN(opts.startFrom) || opts.startFrom < 1) {
+    logger.error(`Invalid --start-from value. Must be a positive integer.`);
+    process.exit(1);
+  }
+  if (opts.count !== Infinity && (isNaN(opts.count) || opts.count < 1)) {
+    logger.error(`Invalid --count value. Must be a positive integer.`);
+    process.exit(1);
+  }
+
   return opts;
 }
 
@@ -181,10 +195,35 @@ async function enableResearch(page) {
   }
 
   await researchItem.click();
-  logger.info('Research mode activated.');
 
   // Wait for menu to close and UI to settle
   await page.waitForTimeout(1500);
+
+  // Verify Research mode is active by checking for a visible indicator.
+  // When Research is enabled, claude.ai shows a "Research" badge/pill
+  // near the chat input area, or the menu item gets a checkmark.
+  const researchActive = await page.evaluate(() => {
+    // Check for any visible element containing "Research" that isn't inside a menu
+    // (the menu should be closed by now — any remaining "Research" text is the badge)
+    const indicators = document.querySelectorAll(
+      '[data-testid*="research"], [class*="research"], [aria-label*="Research"]'
+    );
+    for (const el of indicators) {
+      if (el.offsetParent !== null && !el.closest('[role="menu"]')) return true;
+    }
+    // Fallback: check if the page has any visible text "Research" outside menus
+    const body = document.body.innerText;
+    return body.includes('Research mode') || body.includes('Deep Research');
+  });
+
+  if (researchActive) {
+    logger.ok('Research mode verified active.');
+  } else {
+    // Not fatal — the click may have worked even if we can't find the indicator.
+    // claude.ai UI changes could break this check but not the actual toggle.
+    logger.warn('Research mode clicked but could not verify activation indicator.');
+  }
+
   return true;
 }
 
@@ -239,6 +278,19 @@ async function submitTopic(page, topic, index) {
 
   // Let ProseMirror process the pasted content
   await page.waitForTimeout(1000);
+
+  // Verify the paste actually landed — check the editor has content
+  const editorContent = await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="chat-input"]')
+      || document.querySelector('div[contenteditable="true"]');
+    return el ? el.textContent.trim().length : 0;
+  });
+  if (editorContent === 0) {
+    logger.error(`[${index}] Paste failed — editor is empty after paste.`);
+    await saveScreenshot(page, `topic_${index}_paste_failed`);
+    return false;
+  }
+  logger.info(`[${index}] Paste verified (${editorContent} chars in editor).`);
 
   // Submit: try the send button first, fall back to Enter key
   const sendBtn = await findElement(page, SELECTORS.sendButton, { timeout: 3000 });

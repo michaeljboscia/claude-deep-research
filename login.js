@@ -24,6 +24,13 @@ async function main() {
 
   const { browser, context, page } = await launchBrowser({ visible: true });
 
+  // Register SIGINT handler immediately so Ctrl+C always cleans up
+  process.on('SIGINT', async () => {
+    logger.info('Shutting down Chrome...');
+    await killChrome();
+    process.exit(0);
+  });
+
   await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded' });
   logger.info(`Navigated to ${LOGIN_URL}`);
   logger.info(`Waiting up to 5 minutes for login (look for chat input)...`);
@@ -40,12 +47,6 @@ async function main() {
   }
 
   logger.info('Browser staying open. Press Ctrl+C to exit.');
-
-  process.on('SIGINT', async () => {
-    logger.info('Shutting down Chrome...');
-    await killChrome();
-    process.exit(0);
-  });
 
   // Keep process alive
   await new Promise(() => {});
