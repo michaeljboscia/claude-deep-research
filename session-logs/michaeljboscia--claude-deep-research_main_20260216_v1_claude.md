@@ -28,15 +28,15 @@ Build a Playwright-based tool to batch-launch Claude Deep Research topics from a
 - [x] Phase 9: Fix Cloudflare bypass (connectOverCDP approach)
 - [x] Phase 10: Fix Research toggle activation (+ menu → Research menuitem)
 - [x] Phase 11: Verify end-to-end — single topic with Deep Research ✅
-- [ ] Phase 12: Batch launch 15 Adobe Commerce Backend Bible prompts
-- [ ] Phase 13: Final commit + cleanup
+- [x] Phase 12: Batch launch 15 Adobe Commerce Backend Bible prompts ✅
+- [x] Phase 13: Final commit + cleanup ✅
 
 ---
 
 ## WHERE WE ARE
 
-**Phase:** 11 complete, ready for Phase 12
-**Progress:** ~85% complete — tool is proven working, batch launch pending
+**Phase:** 13 complete — ALL PHASES DONE
+**Progress:** 100% complete — all 15 topics submitted successfully
 
 ---
 
@@ -45,7 +45,7 @@ Build a Playwright-based tool to batch-launch Claude Deep Research topics from a
 1. **connectOverCDP browser strategy** — spawn real Chrome with `--remote-debugging-port=9222`, Playwright attaches via CDP. Cloudflare Turnstile cannot distinguish this from a normal user. Verified: Cloudflare auto-clears, session cookies persist.
 2. **Login persistence** — `browser-profile/` directory holds Chrome profile data. Login once, session survives across runs.
 3. **Research activation** — Click `button[aria-label="Toggle menu"]` (the + icon in chat input) → click `[role="menuitem"]:has-text("Research")` from the dropdown menu.
-4. **Topic submission** — `keyboard.type()` into ProseMirror `contenteditable` div (`data-testid="chat-input"`), then click send button.
+4. **Topic submission** — Clipboard paste (`navigator.clipboard.writeText` + `Meta+V`) into ProseMirror `contenteditable` div, then click send button.
 5. **Chrome stays alive** — Playwright disconnects but Chrome keeps running so Deep Research can process.
 6. **Dry run mode** — `--dry-run` flag correctly parses topics from .txt and .json files.
 7. **15 Adobe Commerce prompts parsed** — `parse-prompts.js` extracted all 15 from the markdown file into JSON.
@@ -106,6 +106,18 @@ Build a Playwright-based tool to batch-launch Claude Deep Research topics from a
 | 22:23 | Parsed 15 Adobe Commerce prompts from markdown → JSON | ✓ |
 | 22:23 | Dry run verified all 15 prompts load correctly | ✓ |
 | 22:25 | Full narrative session notes | ✓ |
+| 22:27 | Context compaction, session continued | ✓ |
+| 22:29 | Added `--count` flag, jitter delays, bumped default delay to 30s | ✓ |
+| 22:30 | Discovered `keyboard.type()` splits prompts on `\n` (Enter = submit) | ✗ |
+| 22:31 | Replaced `keyboard.type()` with clipboard paste (`Meta+V`) | ✓ |
+| 22:33 | Single topic test with clipboard paste — SUCCESS | ✓ |
+| 22:34 | Batch launched topics 2–6, all submitted successfully | ✓ |
+| 22:34 | Committed `b152234` — clipboard paste + count + jitter | ✓ |
+| 22:40 | Batch launched topics 7–11, all submitted successfully | ✓ |
+| 22:44 | Added "DO NOT ASK QUESTIONS" directive wrapper to prompts | ✓ |
+| 22:45 | Batch launched topics 12–15, all submitted successfully | ✓ |
+| 22:47 | Committed `94b55b8` — directive wrapper | ✓ |
+| 22:48 | **ALL 15 TOPICS SUBMITTED** — 15/15, zero failures | ✓ |
 
 ---
 
@@ -114,7 +126,8 @@ Build a Playwright-based tool to batch-launch Claude Deep Research topics from a
 1. **Kill Chrome debug instance:** `lsof -ti:9222 | xargs kill` — do this before launching a new session
 2. **Session expiry:** If claude.ai session expires, re-run `npm run login` (opens visible Chrome)
 3. **Selectors may break:** claude.ai updates their UI. If selectors fail, run `debug-screenshot.js` pattern to dump DOM and update `lib/selectors.js`
-4. **Rate limiting unknown:** We haven't tested with 15 topics yet. Default 15s delay may need increasing if claude.ai rate-limits Deep Research launches.
+4. **Rate limiting:** All 15 topics submitted with 30s ±30% jitter delays. No rate limiting observed during submission. Account hit "extra usage spending limit" (resets Thursday) but this is a usage cap, not bot detection.
+5. **keyboard.type() is BROKEN for multi-line prompts:** `\n` chars become Enter keypresses which trigger submit. ALWAYS use clipboard paste for multi-line content.
 5. **Off-screen Chrome on macOS:** `--window-position=-10000,-10000` works but Chrome may briefly appear in the Dock. Not a functional issue.
 
 ---
@@ -122,6 +135,9 @@ Build a Playwright-based tool to batch-launch Claude Deep Research topics from a
 ## GIT LOG
 
 ```
+94b55b8 Add DO NOT ASK QUESTIONS directive wrapper to all prompts
+b152234 Clipboard paste instead of keyboard.type(), add --count flag and jitter delays
+8d59e2e Add session log, prompt parser, and 15 Adobe Commerce topics
 b7555d6 Fix Cloudflare bypass and Research activation
 136a8c2 Initial commit: Claude Deep Research batch launcher
 ```
@@ -164,6 +180,54 @@ Built and verified the Claude Deep Research batch launcher end-to-end. Overcame 
 
 ### Technical Notes
 - Chrome debug port: 9222 (hardcoded in lib/browser.js)
-- ProseMirror input requires `keyboard.type()` not `fill()`
+- ProseMirror input requires clipboard paste, NOT `keyboard.type()` or `fill()`
 - The + menu button is `aria-label="Toggle menu"`, Research is `[role="menuitem"]:has-text("Research")`
 - `parse-prompts.js` is a one-off utility, not part of the main tool
+
+---
+
+## SESSION UPDATE: 2026-02-16 22:48 EST
+
+### Summary
+Completed the entire project — fixed critical prompt-splitting bug, added anti-detection features, and successfully batch-launched all 15 Adobe Commerce Backend Bible Deep Research topics with zero failures.
+
+### What Was Accomplished
+- Discovered `keyboard.type()` splits multi-line prompts because `\n` → Enter → submit in ProseMirror
+- Replaced with clipboard paste approach (`navigator.clipboard.writeText` + `Meta+V`) — instant, atomic, no splitting
+- Added `--count`/`-n` flag to limit batch size for incremental testing
+- Added ±30% jitter to inter-topic delays (base 30s → random 21–39s) for anti-detection
+- Bumped default delay from 15s to 30s (appropriate for Deep Research's compute cost)
+- Added "DO NOT ASK QUESTIONS - LAUNCH THE PROMPT" directive wrapper to top/bottom of every prompt
+- Removed unused `randomTypingDelay()` function
+- Commit `b152234` — clipboard paste, count flag, jitter delays
+- Commit `94b55b8` — directive wrapper
+- **Batch launched all 15 topics in 3 runs:** 1 (test), 2–6, 7–11, 12–15 — all successful
+
+### Key Decisions & Why
+- **Clipboard paste over keyboard.type()**: `keyboard.type()` sends literal Enter keypresses for `\n` chars, and claude.ai's ProseMirror editor interprets Enter as "submit message". Clipboard paste is atomic — the entire prompt lands at once regardless of newlines. This is also what a real user does (Cmd+V).
+- **Jittered delays**: Fixed 15s intervals between topics is a bot fingerprint. ±30% randomization on a 30s base makes timing look human.
+- **"DO NOT ASK QUESTIONS" wrapper**: Deep Research sometimes asks clarifying questions before starting. This directive forces immediate research launch — user's workflow preference.
+- **Test 1 before batch 5**: User correctly insisted on proving paste works with a single topic before attempting a batch.
+
+### What Works Now
+- Full pipeline: login → navigate → Cloudflare bypass → Research activation → clipboard paste → submit → disconnect
+- All 15 Adobe Commerce Backend Bible topics submitted to Deep Research
+- `--count` flag for incremental batching
+- `--start-from` for resuming from any topic
+- Jittered delays between submissions
+- Directive wrapper on all prompts
+
+### What Doesn't Work / Known Issues
+- Account hit "extra usage spending limit" (resets Thursday at 12:00 PM) — this is a claude.ai usage cap, not bot detection
+- Topics 1–11 were submitted WITHOUT the "DO NOT ASK QUESTIONS" directive (added after those batches)
+- Some of those earlier topics may have asked clarifying questions instead of launching immediately
+
+### Current State
+**Phase:** ALL PHASES COMPLETE
+**Next Step:** Monitor Deep Research results on claude.ai. Tool is ready for reuse with any future topic files.
+
+### Technical Notes
+- `keyboard.type()` is PERMANENTLY UNSUITABLE for multi-line content in ProseMirror — always use clipboard paste
+- Chrome stays alive on port 9222 after Playwright disconnects — `lsof -ti:9222 | xargs kill` to clean up
+- The directive wrapper is hardcoded in `launch-research.js` `submitTopic()` — could be made configurable via CLI flag in the future
+- Anti-detection worked: 15 submissions over ~15 minutes with no bot detection or CAPTCHA triggers
