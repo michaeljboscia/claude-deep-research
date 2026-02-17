@@ -250,6 +250,11 @@ async function submitTopic(page, topic, index) {
     logger.ok(`[${index}] Submitted via Enter key.`);
   }
 
+  // Wait for Deep Research to launch and the chat title to auto-generate.
+  // Without this, navigating away too fast leaves untitled conversations.
+  logger.info(`[${index}] Waiting 15s for chat title to generate...`);
+  await page.waitForTimeout(15000);
+
   return true;
 }
 
