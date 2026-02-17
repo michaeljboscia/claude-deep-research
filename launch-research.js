@@ -11,11 +11,12 @@
  *   node launch-research.js -t ./topics/my-topics.txt -d 30
  *   node launch-research.js -t ./topics/my-topics.txt --dry-run
  *   node launch-research.js -t ./topics/my-topics.txt --start-from 5
+ *   node launch-research.js -t ./topics/my-topics.txt --count 5
  */
 
 const fs = require('fs');
 const path = require('path');
-const { launchBrowser } = require('./lib/browser');
+const { launchBrowser, killChrome } = require('./lib/browser');
 const { SELECTORS, findElement, waitForAny } = require('./lib/selectors');
 const { logger, saveScreenshot } = require('./lib/logger');
 
@@ -25,9 +26,10 @@ function parseArgs() {
   const args = process.argv.slice(2);
   const opts = {
     topicsFile: null,
-    delay: 15,
+    delay: 30,
     dryRun: false,
     startFrom: 1,
+    count: Infinity,
     visible: false,
   };
 
@@ -47,6 +49,10 @@ function parseArgs() {
       case '--start-from':
         opts.startFrom = parseInt(args[++i], 10);
         break;
+      case '--count':
+      case '-n':
+        opts.count = parseInt(args[++i], 10);
+        break;
       case '--visible':
         opts.visible = true;
         break;
@@ -60,7 +66,8 @@ Usage:
 
 Options:
   -t, --topics <file>    Path to topics file (required)
-  -d, --delay <seconds>  Delay between topics (default: 15)
+  -d, --delay <seconds>  Base delay between topics (default: 30, ±30% jitter)
+  -n, --count <N>        Only submit the first N topics (after start-from)
   --dry-run              Print topics without launching browser
   --start-from <N>       Start from topic number N (1-indexed)
   --visible              Show the browser window (default: off-screen)
@@ -104,6 +111,18 @@ function loadTopics(filePath) {
     .split('\n')
     .map(line => line.trim())
     .filter(line => line && !line.startsWith('#'));
+}
+
+// ─── Anti-detection helpers ──────────────────────────────────────
+
+/**
+ * Add ±30% jitter to a base delay so timing isn't perfectly regular.
+ * e.g. base=30 → random value between 21 and 39.
+ */
+function jitter(baseSeconds) {
+  const min = baseSeconds * 0.7;
+  const max = baseSeconds * 1.3;
+  return Math.round(min + Math.random() * (max - min));
 }
 
 // ─── Cloudflare handling ─────────────────────────────────────────
@@ -203,12 +222,18 @@ async function submitTopic(page, topic, index) {
   await input.click();
   await page.waitForTimeout(300);
 
-  // Use keyboard.type() because ProseMirror contenteditable doesn't
-  // respond to Playwright's fill() method.
-  await page.keyboard.type(topic, { delay: 10 });
-  logger.info(`[${index}] Typed topic: "${topic.slice(0, 80)}${topic.length > 80 ? '...' : ''}"`);
+  // Paste the prompt via clipboard — NOT keyboard.type().
+  // keyboard.type() sends literal Enter keypresses for \n characters,
+  // which claude.ai interprets as "submit message", splitting the prompt.
+  // Clipboard paste bypasses this entirely — exactly how a human would do it.
+  await page.evaluate(async (text) => {
+    await navigator.clipboard.writeText(text);
+  }, topic);
+  await page.keyboard.press('Meta+v');
+  logger.info(`[${index}] Pasted topic: "${topic.slice(0, 80)}${topic.length > 80 ? '...' : ''}"`);
 
-  await page.waitForTimeout(500);
+  // Let ProseMirror process the pasted content
+  await page.waitForTimeout(1000);
 
   // Submit: try the send button first, fall back to Enter key
   const sendBtn = await findElement(page, SELECTORS.sendButton, { timeout: 3000 });
@@ -235,15 +260,23 @@ async function main() {
     logger.info(`Starting from topic #${opts.startFrom}`);
   }
 
+  // Calculate the effective topic range
+  const endAt = Math.min(opts.startFrom + opts.count - 1, topics.length);
+  const toSubmit = endAt - opts.startFrom + 1;
+
+  if (opts.count < Infinity) {
+    logger.info(`Will submit ${toSubmit} topics (${opts.startFrom} through ${endAt}).`);
+  }
+
   // Dry run: just print topics and exit
   if (opts.dryRun) {
     logger.info('=== DRY RUN — no browser will be launched ===');
     topics.forEach((topic, i) => {
       const num = i + 1;
-      const skip = num < opts.startFrom ? ' [SKIP]' : '';
-      console.log(`  ${num}. ${topic}${skip}`);
+      const skip = num < opts.startFrom || num > endAt ? ' [SKIP]' : '';
+      console.log(`  ${num}. ${topic.slice(0, 120)}${topic.length > 120 ? '...' : ''}${skip}`);
     });
-    logger.info(`Total: ${topics.length} topics, ${topics.length - opts.startFrom + 1} to submit.`);
+    logger.info(`Total: ${topics.length} topics, ${toSubmit} to submit.`);
     return;
   }
 
@@ -288,9 +321,10 @@ async function main() {
   for (let i = 0; i < topics.length; i++) {
     const num = i + 1;
     if (num < opts.startFrom) continue;
+    if (num > endAt) break;
 
     const topic = topics[i];
-    logger.info(`─── Topic ${num}/${topics.length} ───`);
+    logger.info(`─── Topic ${num}/${topics.length} (batch ${submitted + failed + 1}/${toSubmit}) ───`);
 
     try {
       const ok = await submitTopic(page, topic, num);
@@ -305,16 +339,17 @@ async function main() {
       failed++;
     }
 
-    // Delay between topics (skip after the last one)
-    if (i < topics.length - 1) {
-      logger.info(`Waiting ${opts.delay}s before next topic...`);
-      await page.waitForTimeout(opts.delay * 1000);
+    // Jittered delay between topics (skip after the last one in this batch)
+    if (submitted + failed < toSubmit) {
+      const wait = jitter(opts.delay);
+      logger.info(`Waiting ${wait}s before next topic (base: ${opts.delay}s ±30%)...`);
+      await page.waitForTimeout(wait * 1000);
     }
   }
 
   // Summary
   logger.info('═══════════════════════════════════════');
-  logger.ok(`Done! Submitted: ${submitted}, Failed: ${failed}, Total: ${topics.length}`);
+  logger.ok(`Done! Submitted: ${submitted}, Failed: ${failed}, Batch: ${toSubmit}/${topics.length} total topics`);
   logger.info('Check claude.ai in your browser to monitor research progress.');
   logger.info('═══════════════════════════════════════');
 
