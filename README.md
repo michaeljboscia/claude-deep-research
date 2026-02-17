@@ -180,6 +180,10 @@ This shouldn't happen with the CDP approach (real Chrome). If it does:
 
 Make sure you're using the latest version. Earlier versions used `keyboard.type()` which splits on newlines. The current version uses clipboard paste which handles multi-line prompts correctly.
 
+## Designing Good Prompts
+
+See **[PROMPT_GUIDE.md](PROMPT_GUIDE.md)** for best practices on structuring multi-part Deep Research investigations — including how to scope prompts, optimal sizing (target under 10,000 words of output), the split-by-subsystem strategy, and a reusable prompt template.
+
 ## Platform Note
 
 This tool is built for **macOS**. It uses macOS Chrome paths (`/Applications/Google Chrome.app/`) and the macOS paste shortcut (`Meta+V`). Linux/Windows users would need to modify `lib/browser.js` (Chrome path detection) and `launch-research.js` (paste keybinding to `Control+V`).
