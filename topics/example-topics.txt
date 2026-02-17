@@ -1,0 +1,9 @@
+# Example topics for Claude Deep Research
+# One topic per line. Lines starting with # are comments.
+# Blank lines are ignored.
+
+What are the most effective strategies for reducing e-commerce page load times below 2 seconds, based on recent case studies and performance audits?
+
+Compare the security posture assessment methodologies of NIST CSF 2.0, ISO 27001:2022, and CIS Controls v8 — which framework is best suited for mid-market SaaS companies?
+
+What is the current state of WebAssembly adoption in production web applications as of 2026, including performance benchmarks, toolchain maturity, and real-world case studies?
