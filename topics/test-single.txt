@@ -1,2 +1,0 @@
-# Single topic proof-of-concept test
-What are the top 3 emerging trends in browser automation testing tools as of 2026?

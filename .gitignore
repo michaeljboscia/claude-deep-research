@@ -3,3 +3,8 @@ browser-profile/
 logs/
 session-logs/
 *.log
+
+# Private topic files (keep only example-topics.* in repo)
+topics/adobe-commerce-*.json
+topics/be1-*.json
+topics/test-*.txt
