@@ -33,6 +33,7 @@ Each sub-prompt should target a single coherent concept cluster.
 ### 3. Target Under 10,000 Words of Output
 
 Deep Research produces its best work when the expected output is under 10,000 words (~40KB). Beyond that, quality drops — sections get rushed, examples get shallow, and the research phase doesn't dig deep enough on any single topic.
+Or the Deep Research activity will get an hour into it's run and fail silently - leaving you with nothing but a hole in your token wallet. 
 
 If your prompt would naturally produce more than 10,000 words, that's a signal to split it further.
 
