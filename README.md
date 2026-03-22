@@ -128,7 +128,7 @@ Open [claude.ai](https://claude.ai) in your normal browser. Each topic appears a
 claude-deep-research/
 ├── package.json              # playwright dependency, npm scripts
 ├── .gitignore                # browser-profile/, node_modules/, logs/, session-logs/
-├── LICENSE                   # MIT
+├── LICENSE                   # FSL-1.1-ALv2
 ├── login.js                  # Visible Chrome — manual login, save session
 ├── launch-research.js        # Off-screen Chrome — batch topic submission
 ├── parse-prompts.js          # Utility: extract prompts from markdown code fences
